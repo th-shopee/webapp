@@ -1,0 +1,25 @@
+<!-- app/templates/form.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Submit Error</title>
+</head>
+<body>
+  <h1>Submit Error Report</h1>
+  <form action="/submit" method="post">
+    <label>Basket ID:</label><br>
+    <input type="text" name="basket_id"><br><br>
+
+    <label>Error Type:</label><br>
+    <input type="text" name="error_type"><br><br>
+
+    <label>Station ID:</label><br>
+    <input type="text" name="station_id"><br><br>
+
+    <label>Comment:</label><br>
+    <textarea name="comment"></textarea><br><br>
+
+    <button type="submit">Submit</button>
+  </form>
+</body>
+</html>
