@@ -1,14 +1,10 @@
-from sqlalchemy.orm import Session
-from . import models, schemas, database
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Depends, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse,StreamingResponse
+# main.py
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-import io
-import csv
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from collections import Counter
-
-models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="app/templates")
@@ -21,62 +17,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-        
-@app.post("/submit", response_class=HTMLResponse)
-def submit_form(
-    request: Request,
-    basket_id: str = Form(...),
-    error_type: str = Form(...),
-    station_id: str = Form(...),
-    comment: str = Form(None),
-    db: Session = Depends(get_db)
-):
-    print(">> Form Received:", basket_id, error_type, station_id, comment)  # DEBUG
-
-    db_error = models.Error(
-        basket_id=basket_id,
-        error_type=error_type,
-        station_id=station_id,
-        comment=comment
-    )
-    db.add(db_error)
-    db.commit()
-    db.refresh(db_error)
-
-    return templates.TemplateResponse("thanks.html", {"request": request})
+# Set this to your current ngrok HTTPS URL
+NGROK_URL = "https://annually-safe-dog.ngrok-free.app"
 
 @app.get("/", response_class=HTMLResponse)
 def get_form(request: Request):
     return templates.TemplateResponse("form.html", {"request": request})
 
-@app.get("/data", response_class=HTMLResponse)
-def view_data(
+@app.post("/submit", response_class=HTMLResponse)
+async def submit_form(
     request: Request,
-    basket_id: str = "",
-    error_type: str = "",
-    station_id: str = "",
-    db: Session = Depends(get_db)
+    basket_id: str = Form(...),
+    error_type: str = Form(...),
+    station_id: str = Form(...),
+    comment: str = Form(None)
 ):
-    query = db.query(models.Error)
+    async with httpx.AsyncClient() as client:
+        data = {
+            "basket_id": basket_id,
+            "error_type": error_type,
+            "station_id": station_id,
+            "comment": comment,
+        }
+        try:
+            res = await client.post(f"{NGROK_URL}/submit", data=data)
+            res.raise_for_status()
+        except Exception as e:
+            return HTMLResponse(f"<h1>Submission Failed: {e}</h1>", status_code=500)
 
-    if basket_id:
-        query = query.filter(models.Error.basket_id.contains(basket_id))
-    if error_type:
-        query = query.filter(models.Error.error_type.contains(error_type))
-    if station_id:
-        query = query.filter(models.Error.station_id.contains(station_id))
+    return templates.TemplateResponse("thanks.html", {"request": request})
 
-    results = query.order_by(models.Error.id.desc()).all()
+@app.get("/data", response_class=HTMLResponse)
+async def view_data(request: Request):
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.get(f"{NGROK_URL}/errors")
+            res.raise_for_status()
+            results = res.json()
+        except Exception as e:
+            return HTMLResponse(f"<h1>Error Loading Data: {e}</h1>", status_code=500)
 
-    # Chart: Count by error_type
-    error_types = [r.error_type for r in results]
-    error_counts = Counter(error_types)
+    error_counts = Counter([r["error_type"] for r in results])
     chart_labels = list(error_counts.keys())
     chart_values = list(error_counts.values())
 
@@ -88,15 +69,11 @@ def view_data(
     })
 
 @app.get("/download")
-def download_data(db: Session = Depends(get_db)):
-    records = db.query(models.Error).order_by(models.Error.id.desc()).all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Basket ID", "Error Type", "Station ID", "Comment"])
-
-    for r in records:
-        writer.writerow([r.id, r.basket_id, r.error_type, r.station_id, r.comment])
-
-    output.seek(0)
-    return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=data.csv"})
+async def download_data():
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.get(f"{NGROK_URL}/download")
+            res.raise_for_status()
+            return HTMLResponse(res.text, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=data.csv"})
+        except Exception as e:
+            return HTMLResponse(f"<h1>Download Failed: {e}</h1>", status_code=500)
